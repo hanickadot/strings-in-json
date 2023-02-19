@@ -1,6 +1,10 @@
+#ifndef NORMALIZE_HPP
+#define NORMALIZE_HPP
+
 #include <iterator>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -139,7 +143,7 @@ constexpr bool is_valid_unicode_code_point(char32_t val) noexcept {
 }
 
 constexpr bool between(char32_t v, char32_t lo, char32_t hi) noexcept {
-	return (v - lo) < (hi - lo);
+	return (v - lo) <= (hi - lo);
 }
 
 constexpr bool invalid_value(int32_t v) noexcept {
@@ -217,7 +221,7 @@ constexpr void write_as_utf8_codepoint_with_branch(char *& writer, char32_t cp) 
 	}
 }
 
-constexpr void copy_utf8_codepoint_to_output(char *& writer, string_reader & in, uint8_t number_of_additional_bytes) noexcept {
+constexpr void copy_utf8_codepoint_to_output(char *& writer, string_reader & in, uint8_t number_of_additional_bytes) {
 	assert(number_of_additional_bytes >= 0u);
 	assert(number_of_additional_bytes <= 3u);
 
@@ -243,28 +247,41 @@ constexpr void copy_utf8_codepoint_to_output(char *& writer, string_reader & in,
 	in.move(number_of_additional_bytes + 1u);
 }
 
-constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reader & in, uint8_t number_of_additional_bytes) noexcept {
+constexpr bool copy_utf8_codepoint_to_output_branch(char *& writer, string_reader & in, uint8_t number_of_additional_bytes) noexcept {
 	assert(number_of_additional_bytes >= 0u);
 	assert(number_of_additional_bytes <= 3u);
 
-	if (number_of_additional_bytes >= 0) {
-		*writer++ = *in.current++;
+	// check if there was an error, this type of code unit is not allowed and must be second or farther...
+	bool error = (static_cast<char8_t>(*in.current) & 0b11'000000u) == 0b10'000000;
+
+	// copy each byte
+	*writer++ = *in.current++;
+
+	if (number_of_additional_bytes == 0) [[likely]] {
+		return error;
 	}
 
-	if (number_of_additional_bytes >= 1) {
-		*writer++ = *in.current++;
+	error |= (static_cast<char8_t>(*in.current) & 0b11'000000u) != 0b10'000000;
+	*writer++ = *in.current++;
+
+	if (number_of_additional_bytes == 1) [[likely]] {
+		return error;
 	}
 
-	if (number_of_additional_bytes >= 2) {
-		*writer++ = *in.current++;
+	error |= (static_cast<char8_t>(*in.current) & 0b11'000000u) != 0b10'000000;
+	*writer++ = *in.current++;
+
+	if (number_of_additional_bytes == 2) [[likely]] {
+		return error;
 	}
 
-	if (number_of_additional_bytes == 3) {
-		*writer++ = *in.current++;
-	}
+	error |= (static_cast<char8_t>(*in.current) & 0b11'000000u) != 0b10'000000;
+	*writer++ = *in.current++;
+
+	return error;
 }
 
-[[gnu::flatten]] constexpr auto read_and_normalize_string(string_reader & in, std::span<char> output) noexcept -> std::optional<std::string_view> {
+template <bool Branchless = false> [[gnu::flatten]] constexpr auto read_and_normalize_string(string_reader & in, std::span<char> output) -> std::optional<std::string_view> {
 	if (!in.read_character('"')) {
 		return std::nullopt;
 	}
@@ -274,6 +291,7 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 	// we loop thru
 	for (;;) {
 		if (in.is_end()) [[unlikely]] {
+			throw std::invalid_argument("unexpected end");
 			return std::nullopt;
 		}
 
@@ -288,6 +306,7 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 		if (in.peek() == '\\') [[unlikely]] {
 			in.next();
 			if (in.is_end()) [[unlikely]] {
+				throw std::invalid_argument("unexpected end after escape");
 				return std::nullopt;
 			}
 
@@ -295,7 +314,7 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 			in.next();
 
 			// use replacament table for simple one-char escapes
-			if (const char replacement = escape_table[static_cast<char8_t>(c2)]) {
+			if (const char replacement = escape_table[static_cast<char8_t>(c2)]) [[likely]] {
 				assert(writer < (output.data() + output.size()));
 				*writer++ = replacement;
 				continue;
@@ -303,6 +322,7 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 
 			// there can be only unicode escape now and it must be at least 4 characters + 1 for end quote
 			if ((c2 != 'u') || !in.has_at_least(5u)) [[unlikely]] {
+				throw std::invalid_argument("not enough space");
 				return std::nullopt;
 			}
 
@@ -312,6 +332,7 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 
 			if (invalid_value(h)) [[unlikely]] {
 				// invalid hexdec value
+				throw std::invalid_argument("invalid hexdec escape");
 				return std::nullopt;
 			}
 
@@ -322,6 +343,7 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 				// and if there is not at least 6+1 characters (surrogate pair + end, we can fail)
 				if (!in.has_at_least(7u) || ((in.peek() != '\\') | (in.peek(1) != 'u'))) [[unlikely]] {
 					// something else than pair
+					throw std::invalid_argument("not following lo-surrogate");
 					return std::nullopt;
 				}
 
@@ -331,8 +353,14 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 
 				const char32_t lo = static_cast<uint16_t>(l);
 
-				if (invalid_value(l) || !between(lo, 0xDC00u, 0xDFFFu)) [[unlikely]] {
+				if (invalid_value(l)) [[unlikely]] {
 					// invalid hexdec value
+					throw std::invalid_argument("invalid hexdec in lo-surrogate");
+					return std::nullopt;
+				}
+
+				if (!between(lo, 0xDC00u, 0xDFFFu)) [[unlikely]] {
+					throw std::invalid_argument("not lo-surrogate value");
 					return std::nullopt;
 				}
 
@@ -340,23 +368,39 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 				cp = ((cp & lower_10_bits) << 10u) + (lo & lower_10_bits) + 0x10000ul;
 
 				// resulting character must be valid utf-32 code point
-				if (!is_valid_unicode_code_point(cp)) {
+				if (!is_valid_unicode_code_point(cp)) [[unlikely]] {
+					throw std::invalid_argument("invalid codepoint");
 					return std::nullopt;
 				}
 			}
 
 			// it's given
-			write_as_utf8_codepoint_with_branch(writer, cp);
-
-		} else {
-			// handle unicode
-			const uint8_t additional_bytes = additional_length_of(static_cast<char8_t>(c));
-
-			if (!in.has_at_least(additional_bytes + 1u)) [[unlikely]] {
-				return std::nullopt;
+			if constexpr (Branchless) {
+				write_as_utf8_codepoint(writer, cp);
+			} else {
+				write_as_utf8_codepoint_with_branch(writer, cp);
 			}
 
-			copy_utf8_codepoint_to_output_branch(writer, in, additional_bytes);
+			continue;
+		}
+
+		// handle normal utf-8 unicode (copy each code-point and validate)
+
+		const uint8_t number_of_additional_bytes = additional_length_of(static_cast<char8_t>(c));
+
+		// number of bytes of code_point + current + end quote, otherwise we can end
+		if (!in.has_at_least(number_of_additional_bytes + 2u)) [[unlikely]] {
+			throw std::invalid_argument("not enough space");
+			return std::nullopt;
+		}
+
+		if constexpr (Branchless) {
+			copy_utf8_codepoint_to_output(writer, in, number_of_additional_bytes);
+		} else {
+			if (copy_utf8_codepoint_to_output_branch(writer, in, number_of_additional_bytes)) {
+				throw std::invalid_argument("invalid utf8");
+				return std::nullopt;
+			}
 		}
 	}
 
@@ -364,8 +408,10 @@ constexpr void copy_utf8_codepoint_to_output_branch(char *& writer, string_reade
 	return std::string_view(output.data(), static_cast<size_t>(std::distance(output.data(), writer)));
 }
 
-[[gnu::flatten]] constexpr auto read_and_normalize_string(string_reader & in) noexcept -> std::optional<std::string_view> {
-	return read_and_normalize_string(in, in.writable_rest());
+template <bool Branchless = false> [[gnu::flatten]] constexpr auto read_and_normalize_string(string_reader & in) -> std::optional<std::string_view> {
+	return read_and_normalize_string<Branchless>(in, in.writable_rest());
 }
 
 } // namespace json
+
+#endif

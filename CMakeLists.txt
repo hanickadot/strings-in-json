@@ -9,4 +9,9 @@ target_compile_features(run-tests PUBLIC cxx_std_20)
 target_link_libraries(run-tests Catch2::Catch2WithMain)
 
 add_custom_target(tests COMMAND run-tests --skip-benchmarks --colour-mode ansi DEPENDS run-tests)
-add_custom_target(benchmarks COMMAND run-tests --benchmark-no-analysis --colour-mode ansi DEPENDS run-tests)
+add_custom_target(benchmark COMMAND run-tests --benchmark-no-analysis DEPENDS run-tests)
+
+add_executable(main main.cpp)
+target_compile_features(main PUBLIC cxx_std_20)
+
+add_custom_target(run COMMAND main DEPENDS main)
