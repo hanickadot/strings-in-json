@@ -7,7 +7,21 @@ std::optional<std::string_view> normalize(std::string & content) {
 	return view;
 }
 
+template <size_t Extent> bool test(const char (&in)[Extent]) {
+	auto buffer = std::to_array(in);
+	auto reader = json::string_reader(buffer);
+	auto result = json::read_and_normalize_string(reader);
+	if (!result) {
+		std::cout << "[wrong input!]\n";
+		return false;
+	}
+	std::cout << *result << "\n";
+	return true;
+}
+
 int main() {
+	test(R"("Mil\u00E1nek \uD83D\uDC68\uD83C\uDFFB\u200D\uD83C\uDF7C & Rob\u00EDnek\uD83D\uDC76")");
+
 	auto in = generate_random_json_string_with_length(100);
 	std::cout << in << "\n";
 
