@@ -5,12 +5,13 @@
 #include <random>
 #include <string>
 #include <cstddef>
+#include <array>
 #include <iostream>
 
 std::string generate_random_json_string_with_length(size_t bytes) {
 	std::random_device rd;
 	std::mt19937 gen(rd());
-	std::discrete_distribution<uint8_t> random_byte_length({200, 20, 1, 1, 2, 2});
+	std::discrete_distribution<uint32_t> random_byte_length({200, 20, 1, 1, 2, 2});
 	std::array<std::uniform_int_distribution<uint32_t>, 4> random_character{
 		std::uniform_int_distribution<uint32_t>(0x20u, 0x7Fu),
 		std::uniform_int_distribution<uint32_t>(0x80u, 0x7FFu),
@@ -42,7 +43,7 @@ std::string generate_random_json_string_with_length(size_t bytes) {
 			break;
 		}
 
-		const uint8_t bytes = random_byte_length(gen);
+		const uint8_t bytes = static_cast<uint8_t>(random_byte_length(gen));
 
 		if (bytes == 4u) {
 			if (2 >= (static_cast<size_t>(remaining) - 1u)) {
