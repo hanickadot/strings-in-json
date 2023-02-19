@@ -2,7 +2,13 @@ cmake_minimum_required(VERSION 3.25)
 
 project(json-normalize VERSION 1.0 LANGUAGES CXX)
 
-find_package(Catch2 REQUIRED)
+include(FetchContent)
+FetchContent_Declare(
+	catch2
+	GIT_REPOSITORY https://github.com/catchorg/catch2.git
+	GIT_TAG        devel
+)
+FetchContent_MakeAvailable(catch2)
 
 add_executable(run-tests test.cpp)
 target_compile_features(run-tests PUBLIC cxx_std_20)

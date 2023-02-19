@@ -10,6 +10,7 @@
 #include <type_traits>
 #include <cassert>
 #include <cstdint>
+#include <array>
 
 namespace json {
 
